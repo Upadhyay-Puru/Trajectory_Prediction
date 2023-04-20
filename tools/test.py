@@ -27,6 +27,8 @@ def parse_config():
     parser = argparse.ArgumentParser(description='arg parser')
     parser.add_argument('--cfg_file', type=str, default=None, help='specify the config for training')
 
+    parser.add_argument('--ensemble', type=bool, default=False, help='perform ensemble or not')
+
     parser.add_argument('--batch_size', type=int, default=None, required=False, help='batch size for training')
     parser.add_argument('--workers', type=int, default=4, help='number of workers for dataloader')
     parser.add_argument('--extra_tag', type=str, default='default', help='extra tag for this experiment')
@@ -71,6 +73,27 @@ def eval_single_ckpt(model, test_loader, args, eval_output_dir, logger, epoch_id
     # start evaluation
     eval_utils.eval_one_epoch(
         cfg, model, test_loader, epoch_id, logger, dist_test=dist_test,
+        result_dir=eval_output_dir, save_to_file=args.save_to_file
+    )
+
+def eval_single_ckpt_ensemble(model1, model2, model3, test_loader, args, eval_output_dir, logger, epoch_id, dist_test=False):
+    # load checkpoint
+    if args.ckpt is not None: 
+        it, epoch = model1.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=dist_test)
+        # it, epoch = model2.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=dist_test)
+        # it, epoch = model2.load_params_from_file(filename=args.ckpt, logger=logger, to_cpu=dist_test)
+    else:
+        it, epoch = -1, -1
+    
+    model1.cuda()
+    model2.cuda()
+    model3.cuda()
+
+    logger.info(f'*************** LOAD MODEL (epoch={epoch}, iter={it}) for EVALUATION *****************')
+    
+    # start evaluation
+    eval_utils.eval_one_epoch_ensemble(
+        cfg, model1, model2, model3, test_loader, epoch_id, logger, dist_test=dist_test,
         result_dir=eval_output_dir, save_to_file=args.save_to_file
     )
 
@@ -201,13 +224,20 @@ def main():
         batch_size=args.batch_size,
         dist=dist_test, workers=args.workers, logger=logger, training=False
     )
-    model = model_utils.MotionTransformer(config=cfg.MODEL)
-    with torch.no_grad():
-        if args.eval_all:
-            repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir, dist_test=dist_test)
-        else:
-            eval_single_ckpt(model, test_loader, args, eval_output_dir, logger, epoch_id, dist_test=dist_test)
-
+    
+    if not args.ensemble:
+        model = model_utils.MotionTransformer(config=cfg.MODEL)
+        with torch.no_grad():
+            if args.eval_all:
+                repeat_eval_ckpt(model, test_loader, args, eval_output_dir, logger, ckpt_dir, dist_test=dist_test)
+            else:
+                eval_single_ckpt(model, test_loader, args, eval_output_dir, logger, epoch_id, dist_test=dist_test)
+    else:
+        model1 = model_utils.MotionTransformer(config=cfg.MODEL1)
+        model2 = model_utils.MotionTransformer(config=cfg.MODEL2)
+        model3 = model_utils.MotionTransformer(config=cfg.MODEL3)
+        with torch.no_grad():
+            eval_single_ckpt_ensemble(model1, model2, model3, test_loader, args, eval_output_dir, logger, epoch_id, dist_test=dist_test)
 
 if __name__ == '__main__':
     main()
